@@ -1,52 +1,61 @@
 import os
 import cv2
-import numpy as np
+import random
 from tqdm import tqdm
-import shutil
 
 IMG_SIZE = 128
-INPUT_DIR = 'dataset'
-OUTPUT_DIR = 'dataset_preprocesado'
+DATASET_DIR = 'dataset'  
 
-# Limpiar y crear carpeta salida
-if os.path.exists(OUTPUT_DIR):
-    shutil.rmtree(OUTPUT_DIR)
-os.makedirs(OUTPUT_DIR)
+def augment_image(img):
+    augmented = []
 
-for clase in os.listdir(INPUT_DIR):
-    clase_path = os.path.join(INPUT_DIR, clase)
-    if not os.path.isdir(clase_path):
-        continue
+    # Imagen original
+    augmented.append(img)
 
-    save_dir = os.path.join(OUTPUT_DIR, clase)
-    os.makedirs(save_dir, exist_ok=True)
+    # Flip horizontal
+    augmented.append(cv2.flip(img, 1))
 
-    for filename in tqdm(os.listdir(clase_path), desc=f'Procesando {clase}'):
-        img_path = os.path.join(clase_path, filename)
-        img = cv2.imread(img_path)
+    # Rotación aleatoria ±15 grados
+    rows, cols = img.shape[:2]
+    angle = random.randint(-15, 15)
+    M = cv2.getRotationMatrix2D((cols/2, rows/2), angle, 1)
+    rotated = cv2.warpAffine(img, M, (cols, rows))
+    augmented.append(rotated)
 
-        if img is None:
+    # Saturación aumentada (solo si es color)
+    if len(img.shape) == 3 and img.shape[2] == 3:
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        hsv[..., 1] = cv2.add(hsv[..., 1], 40)  # aumentar saturación
+        saturated = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+        augmented.append(saturated)
+
+    return augmented
+
+for subset in ['train', 'val']:
+    subset_path = os.path.join(DATASET_DIR, subset)
+    for clase in os.listdir(subset_path):
+        clase_path = os.path.join(subset_path, clase)
+        if not os.path.isdir(clase_path):
             continue
 
-        # Convertir a escala de grises (opcional)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        resized = cv2.resize(gray, (IMG_SIZE, IMG_SIZE))
-        normalized = resized / 255.0  # Normalizar entre 0 y 1
+        for filename in tqdm(os.listdir(clase_path), desc=f'Procesando {subset} {clase}'):
+            file_path = os.path.join(clase_path, filename)
+            img = cv2.imread(file_path)
+            if img is None:
+                continue
 
-        # Guardar en uint8 para visualización o datasets que usen imágenes
-        final_img = (normalized * 255).astype(np.uint8)
-        save_path = os.path.join(save_dir, filename)
-        cv2.imwrite(save_path, final_img)
+            # Redimensionar
+            img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
 
-# Limpieza: eliminar archivos que no son carpetas y carpetas vacías
-for nombre in os.listdir(OUTPUT_DIR):
-    path = os.path.join(OUTPUT_DIR, nombre)
-    if not os.path.isdir(path):
-        print(f"Eliminando archivo no válido: {path}")
-        os.remove(path)
-    elif len(os.listdir(path)) == 0:
-        print(f"Eliminando carpeta vacía: {path}")
-        shutil.rmtree(path)
+            # Imagen en escala de grises con 3 canales
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            gray_3ch = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
-# Nota: para usar estas imágenes en PyTorch, usa transformaciones para convertir
-# las imágenes a tensor y normalizarlas, ver Código 1.
+            # Aumentaciones en color y gris
+            variantes = augment_image(img) + augment_image(gray_3ch)
+
+            # Guardar imágenes aumentadas (incluyendo la original)
+            base_name = os.path.splitext(filename)[0]
+            for i, var_img in enumerate(variantes):
+                save_path = os.path.join(clase_path, f"{base_name}_aug{i}.jpg")
+                cv2.imwrite(save_path, var_img)
