@@ -1,88 +1,64 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
-import cv2
 import torch
-import torch.nn as nn
-from torchvision import transforms, models
+import cv2
 import numpy as np
 
-# ✅ Debe ir antes de cualquier otro uso de Streamlit
-st.set_page_config(page_title="Detector de Señas", layout="centered")
+# --- CONFIGURACIÓN ---
+MODEL_PATH = "yolov5/runs/train/yolov5_senas/weights/best.pt"  # Ruta al modelo entrenado
 
-# --- CONFIGURACIÓN GENERAL ---
-IMG_SIZE = 128
-NUM_CLASSES = 26
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# --- CARGA DEL MODELO ---
+# --- CARGAR MODELO YOLOv5 ---
 @st.cache_resource
 def load_model():
-    model = models.resnet50(pretrained=False)
-    num_ftrs = model.fc.in_features
-    model.fc = nn.Sequential(
-        nn.Linear(num_ftrs, 128),
-        nn.ReLU(),
-        nn.Dropout(0.5),
-        nn.Linear(128, NUM_CLASSES)
-    )
-    model.load_state_dict(torch.load("modelo_resnet_lengua_senas.pth", map_location=DEVICE))
-    model.to(DEVICE)
-    model.eval()
+    model = torch.hub.load("ultralytics/yolov5", "custom", path=MODEL_PATH, force_reload=True)
     return model
 
 model = load_model()
-CLASSES = [chr(ord('A') + i) for i in range(NUM_CLASSES)]
 
-# --- TRANSFORMACIÓN DE IMAGEN ---
-transform = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406],
-                         [0.229, 0.224, 0.225])
-])
+# --- TÍTULO DE APP ---
+st.title("Detector de Señas con YOLOv5")
+st.markdown("Muestra una letra con tu mano y el modelo YOLOv5 intentará detectarla en vivo.")
 
-# --- FUNCIÓN DE PREDICCIÓN ---
-def predict(img_bgr):
-    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    img_pil = transforms.ToPILImage()(img_rgb)
-    input_tensor = transform(img_pil).unsqueeze(0).to(DEVICE)
-    with torch.no_grad():
-        output = model(input_tensor)
-        _, pred = output.max(1)
-    return CLASSES[pred.item()]
+# --- INICIAR CÁMARA ---
+run = st.checkbox("Iniciar cámara")
+FRAME_WINDOW = st.image([])
+letra_detectada = st.empty()  # Caja vacía para mostrar la letra detectada
 
-# --- PROCESAMIENTO DEL VIDEO ---
-class SignLanguageDetector(VideoTransformerBase):
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        h, w, _ = img.shape
+cap = None
+if run:
+    cap = cv2.VideoCapture(0)
 
-        # Recuadro central (224x224)
-        box_size = 224
-        x1 = w // 2 - box_size // 2
-        y1 = h // 2 - box_size // 2
-        x2 = x1 + box_size
-        y2 = y1 + box_size
+while run and cap is not None and cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        st.warning("No se pudo capturar el frame de la cámara.")
+        break
 
-        # Recortar imagen en el centro
-        center_crop = img[y1:y2, x1:x2]
+    # Inference con YOLOv5
+    results = model(frame)
+    detections = results.pandas().xyxy[0]  # Pandas DataFrame con detecciones
 
-        if center_crop.shape[0] != 0 and center_crop.shape[1] != 0:
-            try:
-                letra = predict(center_crop)
-                cv2.putText(img, f"Letra: {letra}", (10, 50),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
-            except Exception as e:
-                cv2.putText(img, "Error en predicción", (10, 50),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    letra_principal = "No detectado"
 
-        # Dibujar el recuadro de guía
-        cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 3)
+    # Dibujar cajas y etiquetas
+    if not detections.empty:
+        # Ordenar por confianza descendente
+        detections = detections.sort_values(by="confidence", ascending=False)
+        letra_principal = detections.iloc[0]['name']  # Tomar la letra con mayor confianza
 
-        return img
+        for _, row in detections.iterrows():
+            x1, y1, x2, y2 = map(int, [row['xmin'], row['ymin'], row['xmax'], row['ymax']])
+            label = row['name']
+            conf = row['confidence']
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame, f"{label} ({conf:.2f})", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 2)
 
-# --- INTERFAZ STREAMLIT ---
-st.title("🤟 Detector de Lenguaje de Señas en Vivo")
-st.markdown("Coloca tu mano dentro del recuadro azul. El modelo intentará predecir la letra que estás señalando.")
+    # Mostrar resultado en Streamlit
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    FRAME_WINDOW.image(frame)
 
-webrtc_streamer(key="sign-detect", video_transformer_factory=SignLanguageDetector)
+    # Mostrar letra detectada debajo de la cámara
+    letra_detectada.markdown(f"### Letra detectada: **{letra_principal}**")
+
+# Liberar recursos
+if cap:
+    cap.release()
