@@ -1,7 +1,7 @@
 # Repo-specific GitIgnore ----------------------------------------------------------------------------------------------
-*.jpg
-*.jpeg
-*.png
+#*.jpg
+#*.jpeg
+#*.png
 *.bmp
 *.tif
 *.tiff
@@ -24,8 +24,8 @@
 !cfg/yolov3*.cfg
 
 storage.googleapis.com
-runs/*
-data/*
+#runs/*
+#data/*
 data/images/*
 !data/*.yaml
 !data/hyps
@@ -49,7 +49,7 @@ VOC/
 
 # Neural Network weights -----------------------------------------------------------------------------------------------
 *.weights
-*.pt
+#*.pt
 *.pb
 *.onnx
 *.engine
