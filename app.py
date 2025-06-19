@@ -17,15 +17,15 @@ model = load_model()
 
 # --- TÍTULO APP ---
 st.title("Detector de Señas con YOLOv5")
-st.markdown("Muestra una letra con tu mano. Si se mantiene 5 segundos, se añadirá abajo como texto.")
+st.markdown("Muestra una letra con tu mano. Si se mantiene 1 segundos, se añadirá abajo como texto.")
 
-# --- ELEMENTOS DE STREAMLIT ---
+# --- ELEMENTOS STREAMLIT ---
 run = st.checkbox("Iniciar cámara")
 FRAME_WINDOW = st.image([])
 letra_actual = st.empty()
 letra_confirmada = st.empty()
 
-# Variables para temporizador
+# Variables de control
 letra_anterior = None
 tiempo_inicio = None
 texto_detectado = ""
@@ -33,18 +33,21 @@ texto_detectado = ""
 cap = None
 if run:
     cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        st.error("⚠️ No se pudo abrir la cámara. Asegúrate de que esté conectada y no esté siendo usada por otra aplicación.")
+        run = False
 
 while run and cap is not None and cap.isOpened():
     ret, frame = cap.read()
     if not ret:
-        st.warning("No se pudo capturar el frame de la cámara.")
+        st.warning("⚠️ No se pudo capturar el frame de la cámara.")
         break
 
-    # Inference
+    # --- DETECCIÓN ---
     results = model(frame)
     detections = results.pandas().xyxy[0]
 
-    letra_detectada = None
+    letra_detectada = None  # por defecto
 
     if not detections.empty:
         detections = detections.sort_values(by="confidence", ascending=False)
@@ -58,28 +61,28 @@ while run and cap is not None and cap.isOpened():
             cv2.putText(frame, f"{label} ({conf:.2f})", (x1, y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 2)
 
-    # Control de tiempo para confirmación
+    # --- CONTROL DE TIEMPO PARA CONFIRMAR LETRA ---
     tiempo_actual = time.time()
-    if letra_detectada == letra_anterior:
-        if tiempo_inicio and (tiempo_actual - tiempo_inicio >= 3):
-            texto_detectado += letra_detectada
-            letra_confirmada.markdown(f"### Texto confirmado: **{texto_detectado}**")
-            tiempo_inicio = None
-            letra_anterior = None  # Reiniciar para evitar repetir la misma letra
-    else:
-        letra_anterior = letra_detectada
-        tiempo_inicio = tiempo_actual
+    if letra_detectada is not None:
+        if letra_detectada == letra_anterior:
+            if tiempo_inicio and (tiempo_actual - tiempo_inicio >= 1):
+                texto_detectado += letra_detectada
+                letra_confirmada.markdown(f"### Texto confirmado: **{texto_detectado}**")
+                tiempo_inicio = None
+                letra_anterior = None
+        else:
+            letra_anterior = letra_detectada
+            tiempo_inicio = tiempo_actual
 
-    # Mostrar imagen
+    # --- MOSTRAR EN STREAMLIT ---
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     FRAME_WINDOW.image(frame)
 
-    # Mostrar letra actual
     if letra_detectada:
         letra_actual.markdown(f"### Letra detectada: **{letra_detectada}**")
     else:
         letra_actual.markdown("### Letra detectada: **No detectado**")
 
-# Liberar cámara
+# --- LIBERAR RECURSOS ---
 if cap:
     cap.release()
