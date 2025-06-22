@@ -3,7 +3,7 @@ import cv2
 import random
 from tqdm import tqdm
 
-IMG_SIZE = 128
+IMG_SIZE =  416
 DATASET_DIR = 'dataset'  
 
 def augment_image(img):
